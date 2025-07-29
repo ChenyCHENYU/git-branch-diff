@@ -1,0 +1,34 @@
+{
+  "name": "git-branch-check-diff-commits",
+  "version": "1.0.1",
+  "description": "A simple and beautiful Git branch comparison tool",
+  "main": "index.js",
+  "bin": {
+    "git-branch-check-diff-commits": "bin/cli.js",
+    "gbd": "bin/cli.js"
+  },
+  "type": "module",
+  "files": [
+    "bin/",
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node bin/cli.js main"
+  },
+  "keywords": [
+    "git",
+    "branch",
+    "diff",
+    "cli"
+  ],
+  "author": "ChenYu",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/git-branch-check-diff-commits.git"
+  }
+}
