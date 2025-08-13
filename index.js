@@ -505,7 +505,7 @@ export async function analyzeBranches(targetBranch, options = {}) {
   if (workingDir.isClean) {
     log.success("工作区干净，可以安全进行分支操作");
   } else {
-    log.warning(`有 ${workingDir.changedFiles.length} 个文件待处理`);
+    log.warning(` 有 ${workingDir.changedFiles.length} 个文件待处理`);
     workingDir.changedFiles.slice(0, 3).forEach(({ file, status }) => {
       log.detail(`${status} ${file}`);
     });
@@ -622,7 +622,7 @@ export async function analyzeBranches(targetBranch, options = {}) {
       
     case "ahead":
       if (realCodeDiff.realDiff && realCodeDiff.aheadCommits > 0) {
-        log.info("推送新代码到远程");
+        log.info(" 推送新代码到远程");
         
         // 🎯 修复：更智能的推送建议
         if (targetBranch.startsWith('origin/')) {
