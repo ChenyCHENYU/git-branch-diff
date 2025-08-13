@@ -1,6 +1,6 @@
 {
   "name": "git-branch-check-diff-commits",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "A simple and beautiful Git branch comparison tool",
   "main": "index.js",
   "bin": {
