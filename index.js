@@ -100,20 +100,29 @@ function validateBranch(branch) {
 }
 
 /**
- * 检查分支是否存在
+ * 检查分支是否存在 - 修复版本
  */
 function checkBranchExists(branch, autoFetch = true) {
+  // 🎯 修复：远程分支自动fetch，但要处理网络错误
   if (branch.includes("/") && autoFetch) {
-    execGit("git fetch --all", true);
+    try {
+      execGit("git fetch --all", true);
+    } catch (error) {
+      // 网络错误时不应该阻止检查本地分支
+      log.warning("无法连接远程仓库，将只检查本地分支");
+    }
   }
 
+  // 🎯 修复：更准确的分支检查逻辑
+  const branchName = branch.replace(/^origin\//, '');
+  
   const checks = [
+    // 检查本地分支
+    `git show-ref --verify --quiet refs/heads/${branchName}`,
     `git show-ref --verify --quiet refs/heads/${branch}`,
+    // 检查远程分支
     `git show-ref --verify --quiet refs/remotes/${branch}`,
-    `git show-ref --verify --quiet refs/remotes/origin/${branch.replace(
-      "origin/",
-      ""
-    )}`,
+    `git show-ref --verify --quiet refs/remotes/origin/${branchName}`,
   ];
 
   return checks.some((cmd) => execGit(cmd, true) !== null);
@@ -234,70 +243,87 @@ function analyzeMergeHistory(targetBranch, limit = 10) {
 }
 
 /**
- * 🎯 检测自动化发布流程
+ * 🎯 检测自动化发布流程 - 修复版本
  */
 function detectAutomatedFlow(merges) {
-  if (merges.length < 2) {
+  if (merges.length < 1) {
     return { detected: false, description: null, chain: [] };
   }
 
-  // 检查是否有连续的合并操作
-  const recentMerges = merges.slice(0, 3); // 最近3次合并
+  // 🎯 修复：更宽松的模式检测，避免误判
+  const recentMerges = merges.slice(0, 5); // 增加检查范围到5次合并
   
   // 模式1：feature -> dev -> main 流程
-  const hasFeatureToDev = recentMerges.some(m => 
+  const featureMerges = recentMerges.filter(m => 
     m.sourceBranch.includes('feature') || 
     m.sourceBranch.includes('dev_') ||
-    m.sourceBranch.match(/^[a-zA-Z0-9_-]+_\d+/)
+    m.sourceBranch.match(/^[a-zA-Z0-9_-]+_\d+/) ||
+    m.message.toLowerCase().includes('feature')
   );
   
-  const hasDevToMain = recentMerges.some(m => 
-    m.sourceBranch === 'dev' || m.message.includes('dev')
+  const devMerges = recentMerges.filter(m => 
+    m.sourceBranch === 'dev' || 
+    m.sourceBranch === 'develop' ||
+    m.message.toLowerCase().includes('dev')
   );
 
-  if (hasFeatureToDev && hasDevToMain && recentMerges.length >= 2) {
+  // 🎯 修复：只有明确的模式才算自动化流程
+  if (featureMerges.length >= 1 && devMerges.length >= 1 && recentMerges.length >= 2) {
     const chain = [];
     
-    // 构建合并链
-    recentMerges.forEach((merge, index) => {
-      if (index < 2) { // 只分析最近两次
-        chain.push({
-          step: index + 1,
-          from: merge.sourceBranch,
-          to: index === 0 ? 'main' : 'dev',
-          hash: merge.hash,
-          message: merge.message
-        });
-      }
-    });
+    // 构建合并链 - 按时间顺序
+    if (devMerges[0]) {
+      chain.push({
+        step: 1,
+        from: devMerges[0].sourceBranch,
+        to: 'main',
+        hash: devMerges[0].hash,
+        message: devMerges[0].message.substring(0, 50) + '...'
+      });
+    }
+    
+    if (featureMerges[0]) {
+      chain.push({
+        step: 2,
+        from: featureMerges[0].sourceBranch,
+        to: 'dev',
+        hash: featureMerges[0].hash,
+        message: featureMerges[0].message.substring(0, 50) + '...'
+      });
+    }
 
     return {
       detected: true,
-      description: `检测到自动化发布流程`,
-      chain: chain.reverse() // 反转显示顺序：先feature->dev，后dev->main
+      description: `检测到可能的自动化发布流程`,
+      chain: chain.reverse() // 反转显示顺序
     };
   }
 
-  // 模式2：简单的双重合并
+  // 🎯 修复：降低连续合并的判断标准
   if (recentMerges.length >= 2) {
-    return {
-      detected: true,
-      description: `检测到连续合并操作`,
-      chain: recentMerges.slice(0, 2).reverse().map((merge, index) => ({
-        step: index + 1,
-        from: merge.sourceBranch,
-        to: index === 0 ? 'current' : 'previous',
-        hash: merge.hash,
-        message: merge.message
-      }))
-    };
+    // 检查是否真的是有意义的连续合并
+    const hasDistinctSources = new Set(recentMerges.slice(0, 2).map(m => m.sourceBranch)).size > 1;
+    
+    if (hasDistinctSources) {
+      return {
+        detected: true,
+        description: `检测到连续合并操作`,
+        chain: recentMerges.slice(0, 2).reverse().map((merge, index) => ({
+          step: index + 1,
+          from: merge.sourceBranch,
+          to: index === 0 ? 'current branch' : 'previous target',
+          hash: merge.hash,
+          message: merge.message.substring(0, 50) + '...'
+        }))
+      };
+    }
   }
 
   return { detected: false, description: null, chain: [] };
 }
 
 /**
- * 🎯 计算真实代码差异（排除合并提交）
+ * 🎯 计算真实代码差异（排除合并提交）- 修复版本
  */
 function calculateRealCodeDiff(targetBranch) {
   try {
@@ -305,16 +331,15 @@ function calculateRealCodeDiff(targetBranch) {
     const mergeBase = execGit(`git merge-base HEAD ${targetBranch}`, true)?.trim();
     
     if (!mergeBase) {
-      return { realDiff: false, behindCommits: 0, aheadCommits: 0 };
+      return { realDiff: true, behindCommits: 0, aheadCommits: 0, hasFileDiff: true };
     }
 
-    // 计算目标分支相对于合并基础点的非合并提交
+    // 🎯 修复：计算相对于合并基础点的提交数
     const targetNonMergeCommits = execGit(
       `git rev-list --no-merges --count ${mergeBase}..${targetBranch}`,
       true
     )?.trim();
     
-    // 计算当前分支相对于合并基础点的非合并提交
     const currentNonMergeCommits = execGit(
       `git rev-list --no-merges --count ${mergeBase}..HEAD`,
       true
@@ -323,24 +348,36 @@ function calculateRealCodeDiff(targetBranch) {
     const behindCommits = parseInt(targetNonMergeCommits || '0');
     const aheadCommits = parseInt(currentNonMergeCommits || '0');
     
-    // 检查是否有实际的文件差异
-    const fileDiff = execGit(`git diff --name-only ${targetBranch}..HEAD`, true)?.trim();
+    // 🎯 修复：检查实际的文件差异
+    const fileDiff = execGit(`git diff --name-only ${targetBranch}...HEAD`, true)?.trim();
     const hasFileDiff = !!fileDiff;
 
+    // 🎯 修复：更准确的差异判断
+    // 如果有文件差异，或者有非合并提交差异，就认为有实际差异
+    const realDiff = hasFileDiff || behindCommits > 0 || aheadCommits > 0;
+
     return {
-      realDiff: behindCommits > 0 || hasFileDiff,
+      realDiff,
       behindCommits,
       aheadCommits,
       hasFileDiff,
-      mergeBase: mergeBase.substring(0, 7)
+      mergeBase: mergeBase.substring(0, 7),
+      fileDiffCount: fileDiff ? fileDiff.split('\n').length : 0
     };
-  } catch {
-    return { realDiff: false, behindCommits: 0, aheadCommits: 0 };
+  } catch (error) {
+    // 🎯 修复：错误处理时应该假设有差异，避免误判
+    return { 
+      realDiff: true, 
+      behindCommits: 0, 
+      aheadCommits: 0, 
+      hasFileDiff: true,
+      error: error.message 
+    };
   }
 }
 
 /**
- * 🎯 智能分析分支关系
+ * 🎯 智能分析分支关系 (修复版本)
  */
 function analyzeBranchRelation(target) {
   try {
@@ -352,16 +389,26 @@ function analyzeBranchRelation(target) {
       return { type: "synchronized", confidence: "high" };
     }
 
-    // 检查是否为已合并状态
-    const targetCommits = execGit(
+    // 🎯 修复：更准确的合并检查
+    // 检查目标分支的所有提交是否都在当前分支中
+    const targetUniqueCommits = execGit(
       `git rev-list ${target} --not HEAD`,
       true
     )?.trim();
     
-    const isFullyMerged = !targetCommits;
-    
-    if (isFullyMerged) {
-      return { type: "merged", confidence: "high" };
+    const currentUniqueCommits = execGit(
+      `git rev-list HEAD --not ${target}`,
+      true
+    )?.trim();
+
+    // 🎯 真正的合并状态：目标分支没有独有的提交
+    const isTargetFullyMerged = !targetUniqueCommits;
+    const hasCurrentUniqueCommits = !!currentUniqueCommits;
+
+    if (isTargetFullyMerged && hasCurrentUniqueCommits) {
+      return { type: "ahead", confidence: "high" };
+    } else if (isTargetFullyMerged && !hasCurrentUniqueCommits) {
+      return { type: "synchronized", confidence: "high" };
     }
 
     // 检查常规的前后关系
@@ -372,7 +419,16 @@ function analyzeBranchRelation(target) {
     } else if (mergeBase === targetHead) {
       return { type: "ahead", confidence: "high" };
     } else {
-      return { type: "diverged", confidence: "medium" };
+      // 🎯 更准确的分叉判断
+      if (targetUniqueCommits && currentUniqueCommits) {
+        return { type: "diverged", confidence: "high" };
+      } else if (targetUniqueCommits && !currentUniqueCommits) {
+        return { type: "behind", confidence: "high" };
+      } else if (!targetUniqueCommits && currentUniqueCommits) {
+        return { type: "ahead", confidence: "high" };
+      } else {
+        return { type: "synchronized", confidence: "medium" };
+      }
     }
   } catch {
     return { type: "unknown", confidence: "low" };
@@ -477,50 +533,78 @@ export async function analyzeBranches(targetBranch, options = {}) {
   log.detail(`对比分支: ${styles.blue}${targetBranch}${styles.reset}`);
   log.detail(`最新提交: ${targetInfo.lastCommit} (${targetInfo.commitDate})`);
 
-  // 🎯 代码状态分析（高亮显示）
+  // 🎯 代码状态分析（修复版本 - 更准确的判断）
   log.subtitle(`${icons.chart} 代码状态`);
+  
+  // 🎯 修复：添加调试信息（可选）
+  if (options.verbose) {
+    log.detail(`调试信息: ahead=${basicStats.ahead}, behind=${basicStats.behind}`);
+    log.detail(`实际差异: aheadCommits=${realCodeDiff.aheadCommits}, behindCommits=${realCodeDiff.behindCommits}`);
+    log.detail(`文件差异: ${realCodeDiff.hasFileDiff ? '有' : '无'} (${realCodeDiff.fileDiffCount || 0} 个文件)`);
+  }
   
   switch (relationship.type) {
     case "synchronized":
       log.highlight("🎯 代码完全一致");
       break;
       
-    case "merged":
-      log.highlight("🎯 代码已一致 - 分支已合并");
-      if (mergeHistory.hasAutomatedFlow) {
-        log.detail("✨ 通过自动化流程合并");
-      }
-      break;
-      
     case "ahead":
-      if (realCodeDiff.realDiff) {
-        log.alert(`⚠️  有新代码未同步 - 实际领先 ${realCodeDiff.aheadCommits} 个提交`);
+      if (realCodeDiff.realDiff && realCodeDiff.aheadCommits > 0) {
+        log.alert(`⚠️  有新代码未同步 - 领先 ${basicStats.ahead} 个提交`);
+        log.detail(`实际功能提交: ${realCodeDiff.aheadCommits} 个`);
+        if (realCodeDiff.hasFileDiff) {
+          log.detail(`变更文件: ${realCodeDiff.fileDiffCount} 个`);
+        }
+      } else if (basicStats.ahead > 0) {
+        log.highlight("🎯 代码基本一致 - 主要是合并提交差异");
+        log.detail(`合并相关提交: ${basicStats.ahead} 个`);
       } else {
-        log.highlight("🎯 代码一致 - 只有合并提交差异");
+        log.highlight("🎯 代码完全一致");
       }
       break;
       
     case "behind":
-      if (realCodeDiff.realDiff) {
-        log.alert(`⚠️  代码落后 - 需要同步 ${realCodeDiff.behindCommits} 个实际提交`);
+      if (realCodeDiff.realDiff && realCodeDiff.behindCommits > 0) {
+        log.alert(`⚠️  代码落后 - 需要同步 ${basicStats.behind} 个提交`);
+        log.detail(`需要同步的功能提交: ${realCodeDiff.behindCommits} 个`);
+        if (realCodeDiff.hasFileDiff) {
+          log.detail(`对方新增文件: ${realCodeDiff.fileDiffCount} 个`);
+        }
+      } else if (basicStats.behind > 0) {
+        log.info("代码基本一致，主要是提交历史差异");
+        log.detail(`历史提交差异: ${basicStats.behind} 个`);
       } else {
-        log.info("代码基本一致，有少量提交差异");
+        log.highlight("🎯 代码完全一致");
       }
       break;
       
     case "diverged":
-      log.warning("代码有分歧，需要合并处理");
+      log.warning(`🔀 代码有分歧 - 领先 ${basicStats.ahead} 个，落后 ${basicStats.behind} 个提交`);
+      if (realCodeDiff.realDiff) {
+        if (realCodeDiff.aheadCommits > 0 || realCodeDiff.behindCommits > 0) {
+          log.detail(`实际代码差异: 领先 ${realCodeDiff.aheadCommits} 个，落后 ${realCodeDiff.behindCommits} 个功能提交`);
+        }
+        if (realCodeDiff.hasFileDiff) {
+          log.detail(`文件冲突风险: ${realCodeDiff.fileDiffCount} 个文件有差异`);
+        }
+      }
       break;
       
     default:
       log.warning("无法确定代码状态");
+      if (realCodeDiff.error) {
+        log.detail(`错误信息: ${realCodeDiff.error}`);
+      }
   }
 
   // 🎯 详细差异（仅在需要时显示）
-  if (realCodeDiff.realDiff && (relationship.type === "behind" || relationship.type === "diverged")) {
-    log.subtitle(`${icons.file} 实际代码差异`);
+  if (realCodeDiff.realDiff && (relationship.type === "behind" || relationship.type === "diverged" || relationship.type === "ahead")) {
+    log.subtitle(`${icons.file} 详细代码差异`);
     if (realCodeDiff.behindCommits > 0) {
-      log.detail(`落后的功能提交: ${styles.red}${realCodeDiff.behindCommits}${styles.reset}`);
+      log.detail(`目标分支的新功能: ${styles.red}${realCodeDiff.behindCommits}${styles.reset} 个提交`);
+    }
+    if (realCodeDiff.aheadCommits > 0) {
+      log.detail(`当前分支的新功能: ${styles.green}${realCodeDiff.aheadCommits}${styles.reset} 个提交`);
     }
     if (realCodeDiff.hasFileDiff) {
       log.detail(`${styles.yellow}有文件变更差异${styles.reset}`);
@@ -528,37 +612,81 @@ export async function analyzeBranches(targetBranch, options = {}) {
     log.detail(`共同基础: ${realCodeDiff.mergeBase}`);
   }
 
-  // 🎯 操作建议
+  // 🎯 操作建议（修复版本 - 更智能的建议）
   log.subtitle(`${icons.target} 智能建议`);
   
   switch (relationship.type) {
     case "synchronized":
-    case "merged":
-      log.success("无需操作 - 代码已同步");
-      if (relationship.type === "merged" && !targetBranch.includes("/")) {
-        log.info("可删除已合并的本地分支");
-        log.detail(`git branch -d ${targetBranch}`);
-      }
+      log.success("无需操作 - 代码完全同步");
       break;
       
     case "ahead":
-      if (realCodeDiff.realDiff) {
-        log.info("推送新代码");
-        log.detail(`git push origin ${currentBranch}`);
+      if (realCodeDiff.realDiff && realCodeDiff.aheadCommits > 0) {
+        log.info("推送新代码到远程");
+        
+        // 🎯 修复：更智能的推送建议
+        if (targetBranch.startsWith('origin/')) {
+          const remoteBranch = targetBranch.replace('origin/', '');
+          log.detail(`git push origin ${currentBranch}:${remoteBranch}`);
+          log.detail("或者创建合并请求/PR");
+        } else {
+          log.detail(`git push origin ${currentBranch}`);
+          if (targetBranch === 'main' || targetBranch === 'master') {
+            log.detail("建议: 先创建PR而不是直接推送到主分支");
+          }
+        }
+      } else if (basicStats.ahead > 0) {
+        log.success("代码内容一致 - 只是提交历史不同");
+        log.detail("可以选择性推送或保持现状");
       } else {
-        log.success("无需操作 - 只是合并历史不同");
+        log.success("无需操作");
       }
       break;
       
     case "behind":
       log.warning("需要更新代码");
-      log.detail(`git pull origin ${targetBranch}`);
+      
+      // 🎯 修复：更准确的更新建议
+      if (targetBranch.includes('/')) {
+        const parts = targetBranch.split('/');
+        if (parts[0] === 'origin') {
+          log.detail(`git pull origin ${parts[1]}`);
+        } else {
+          log.detail(`git fetch && git merge ${targetBranch}`);
+        }
+      } else {
+        log.detail(`git merge ${targetBranch}`);
+        log.detail(`或使用: git pull origin ${targetBranch}`);
+      }
+      
+      if (realCodeDiff.behindCommits > 3) {
+        log.detail("提示: 变更较多，建议review后再合并");
+      }
       break;
       
     case "diverged":
       log.warning("需要合并分支");
-      log.detail(`git merge ${targetBranch}`);
+      
+      // 🎯 修复：分叉情况的智能建议
+      if (realCodeDiff.hasFileDiff && realCodeDiff.fileDiffCount > 5) {
+        log.detail("⚠️ 文件冲突风险较高，建议:");
+        log.detail("1. 先备份当前工作");
+        log.detail(`2. git merge ${targetBranch} # 合并并解决冲突`);
+        log.detail("3. 或使用: git rebase " + targetBranch + " # 变基方式");
+      } else {
+        log.detail(`git merge ${targetBranch}`);
+        log.detail("或使用 rebase: git rebase " + targetBranch);
+      }
+      
+      if (basicStats.ahead > 10 || basicStats.behind > 10) {
+        log.detail("提示: 分叉较严重，建议寻求团队协助");
+      }
       break;
+      
+    default:
+      log.warning("建议手动检查分支状态");
+      log.detail(`git log --oneline --graph ${targetBranch}..HEAD`);
+      log.detail(`git log --oneline --graph HEAD..${targetBranch}`);
   }
 
   log.end();
