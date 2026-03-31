@@ -5,11 +5,12 @@
 ## ✨ 核心特性
 
 - 🎯 **智能代码状态分析** - 准确识别代码差异状态（高亮显示）
-- 🌊 **自动化流程检测** - 自动识别 `feature → dev → main` 发布流程
+- 🌊 **自动化流程检测** - 自动识别 `feature → dev → main` 发布流程（experimental）
 - 📊 **真实差异计算** - 排除合并提交，只关注实际功能代码差异
 - 🔀 **合并历史追溯** - 显示具体的合并链路和操作历史
 - 🎨 **精美可视化输出** - 彩色图标和清晰的层级结构
 - 💡 **智能操作建议** - 基于分析结果提供精准的下一步操作
+- 🔌 **数据/展示分离** - API 返回纯净数据，方便程序化集成
 
 ## 🚀 快速开始
 
@@ -39,9 +40,12 @@ gbd origin/feature/user-auth
 git-branch-check-diff-commits main
 
 # 选项
-gbd main --json        # JSON格式输出
-gbd main --no-fetch    # 跳过自动fetch
+gbd main --json        # JSON 格式输出（纯净数据，无 ANSI 码）
+gbd main --no-fetch    # 跳过自动 fetch（纯本地对比）
+gbd main --no-color    # 禁用颜色输出（适合 CI/管道）
+gbd main --silent      # 静默模式，仅返回数据不输出
 gbd main --verbose     # 显示详细调试信息
+gbd -v                 # 显示版本号
 ```
 
 ## 📋 使用场景
@@ -201,7 +205,7 @@ gbd origin/develop
 - name: 检查分支状态
   run: |
     npm install -g git-branch-check-diff-commits
-    gbd main --json > branch-status.json
+    gbd main --json --no-fetch > branch-status.json
     
 - name: 分析结果
   run: |
@@ -220,27 +224,38 @@ gbd origin/develop
 ## 📚 API 使用
 
 ```javascript
-import { analyzeBranches } from "git-branch-check-diff-commits";
+import { analyzeBranches, analyze, printReport, setColor } from "git-branch-check-diff-commits";
 
-// 基本分析
+// 基本分析（带终端输出，向后兼容）
 const result = await analyzeBranches("main");
 
 // 带选项的分析
 const result = await analyzeBranches("develop", { 
-  json: true,
-  noFetch: false,
-  verbose: true
+  json: true,       // JSON 输出
+  noFetch: true,     // 跳过 fetch
+  noColor: true,     // 禁用颜色
+  verbose: true,     // 调试信息
+  silent: true,      // 静默模式（不输出，只返回数据）
 });
 
-// 获取分析结果
-console.log(result.relationship.type);    // "ahead" | "behind" | "synchronized" | "diverged"
-console.log(result.realCodeDiff.realDiff); // true/false - 是否有真实代码差异
-console.log(result.realCodeDiff.aheadCommits); // 领先的功能提交数
-console.log(result.realCodeDiff.fileDiffCount); // 变更文件数量
-console.log(result.mergeHistory.hasAutomatedFlow); // 是否检测到自动化流程
+// 🆕 纯数据分析（无任何终端输出，适合程序化集成）
+const data = await analyze("main", { noFetch: true });
+console.log(data.relationship.type);    // "ahead" | "behind" | "synchronized" | "diverged"
+console.log(data.realCodeDiff.realDiff); // true/false
+console.log(data.workingDirectory.changedFiles); // [{file: "src/index.js", status: "modified"}]
+
+// 🆕 手动输出报告（数据/展示完全分离）
+const data = await analyze("main");
+printReport(data, { verbose: true });
+
+// 🆕 控制颜色输出
+setColor(false); // 全局禁用颜色
 ```
 
 ### 返回数据结构
+
+> JSON 输出和 `analyze()` 返回的数据结构完全一致，**不含 ANSI 转义码**，可安全用于下游解析。
+
 ```typescript
 interface AnalysisResult {
   currentBranch: string;
@@ -270,7 +285,10 @@ interface AnalysisResult {
   };
   workingDirectory: {
     isClean: boolean;
-    changedFiles: Array<{file: string, status: string}>;
+    changedFiles: Array<{
+      file: string;
+      status: "modified" | "added" | "deleted" | "untracked" | "unknown";
+    }>;
   };
   basicStats: {
     ahead: number;
@@ -288,11 +306,11 @@ interface AnalysisResult {
 - **⚠️ 代码落后** - 需要同步功能提交  
 - **🔀 代码有分歧** - 两个分支都有对方没有的提交
 
-### 自动化流程检测
+### 自动化流程检测（experimental）
 - 自动识别 `feature → dev → main` 发布流程
 - 显示具体的合并链路和提交哈希
 - 区分自动化合并和手动操作
-- 支持复杂的分支合并模式检测
+- 基于 merge commit message 的启发式检测，结果仅供参考
 
 ### 智能建议系统
 - 基于真实代码差异提供精准建议
@@ -311,6 +329,18 @@ gbd main --verbose
 - 文件差异详情
 - 合并基础点信息
 - Git 命令执行状态
+
+### 无颜色模式
+```bash
+gbd main --no-color
+```
+适合 CI/CD 管道或不支持 ANSI 的终端，输出纯文本格式。
+
+### 静默模式
+```bash
+# 在脚本中只获取退出码和数据
+result=$(gbd main --json --silent 2>/dev/null)
+```
 
 ### 错误处理和边界情况
 - **网络错误**: 自动降级到本地分支检查
@@ -344,7 +374,7 @@ gbd upstream/develop  # 检查上游开发分支
 git branch | grep feature | xargs -I {} gbd {}
 
 # CI/CD 中使用
-gbd main --json --no-fetch  # 适合CI环境的检查
+gbd main --json --no-fetch --no-color  # 适合CI环境的检查
 ```
 
 ## 🐛 故障排除

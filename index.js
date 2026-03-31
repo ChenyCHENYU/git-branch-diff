@@ -1,20 +1,39 @@
 import { execSync } from "child_process";
 
-// 精致的颜色和样式工具
-const styles = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m",
-  gray: "\x1b[90m",
-  purple: "\x1b[35m",
-  bgGreen: "\x1b[42m\x1b[30m",
-  bgRed: "\x1b[41m\x1b[37m",
-};
+// 颜色开关
+let _colorEnabled = true;
+
+/**
+ * 设置是否启用颜色输出
+ */
+export function setColor(enabled) {
+  _colorEnabled = enabled;
+}
+
+// 精致的颜色和样式工具（支持 noColor）
+function getStyles() {
+  if (!_colorEnabled) {
+    return {
+      reset: "", bold: "", dim: "", red: "", green: "",
+      yellow: "", blue: "", cyan: "", gray: "", purple: "",
+      bgGreen: "", bgRed: "",
+    };
+  }
+  return {
+    reset: "\x1b[0m",
+    bold: "\x1b[1m",
+    dim: "\x1b[2m",
+    red: "\x1b[31m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    blue: "\x1b[34m",
+    cyan: "\x1b[36m",
+    gray: "\x1b[90m",
+    purple: "\x1b[35m",
+    bgGreen: "\x1b[42m\x1b[30m",
+    bgRed: "\x1b[41m\x1b[37m",
+  };
+}
 
 // 精致的图标
 const icons = {
@@ -37,35 +56,39 @@ const icons = {
 };
 
 // 精致的日志工具
-const log = {
-  title: (msg) =>
-    console.log(`\n${styles.bold}${styles.cyan}╭─ ${msg} ─╮${styles.reset}`),
-  subtitle: (msg) =>
-    console.log(`${styles.bold}${styles.blue}├─ ${msg}${styles.reset}`),
-  success: (msg) =>
-    console.log(`${styles.green}${icons.success} ${msg}${styles.reset}`),
-  warning: (msg) =>
-    console.log(`${styles.yellow}${icons.warning} ${msg}${styles.reset}`),
-  error: (msg) =>
-    console.log(`${styles.red}${icons.error} ${msg}${styles.reset}`),
-  info: (msg) =>
-    console.log(`${styles.blue}${icons.info} ${msg}${styles.reset}`),
-  merged: (msg) =>
-    console.log(`${styles.purple}${icons.merged} ${msg}${styles.reset}`),
-  highlight: (msg) =>
-    console.log(`${styles.bgGreen} ${msg} ${styles.reset}`),
-  alert: (msg) =>
-    console.log(`${styles.bgRed} ${msg} ${styles.reset}`),
-  detail: (msg) => console.log(`${styles.gray}  │ ${msg}${styles.reset}`),
-  separator: () =>
-    console.log(`${styles.gray}  ├${"─".repeat(50)}${styles.reset}`),
-  end: () => console.log(`${styles.cyan}╰${"─".repeat(52)}╯${styles.reset}\n`),
-};
+function getLog() {
+  const s = getStyles();
+  return {
+    title: (msg) =>
+      console.log(`\n${s.bold}${s.cyan}╭─ ${msg} ─╮${s.reset}`),
+    subtitle: (msg) =>
+      console.log(`${s.bold}${s.blue}├─ ${msg}${s.reset}`),
+    success: (msg) =>
+      console.log(`${s.green}${icons.success} ${msg}${s.reset}`),
+    warning: (msg) =>
+      console.log(`${s.yellow}${icons.warning} ${msg}${s.reset}`),
+    error: (msg) =>
+      console.log(`${s.red}${icons.error} ${msg}${s.reset}`),
+    info: (msg) =>
+      console.log(`${s.blue}${icons.info} ${msg}${s.reset}`),
+    merged: (msg) =>
+      console.log(`${s.purple}${icons.merged} ${msg}${s.reset}`),
+    highlight: (msg) =>
+      console.log(`${s.bgGreen} ${msg} ${s.reset}`),
+    alert: (msg) =>
+      console.log(`${s.bgRed} ${msg} ${s.reset}`),
+    detail: (msg) => console.log(`${s.gray}  │ ${msg}${s.reset}`),
+    separator: () =>
+      console.log(`${s.gray}  ├${"─".repeat(50)}${s.reset}`),
+    end: () => console.log(`${s.cyan}╰${"─".repeat(52)}╯${s.reset}\n`),
+  };
+}
 
 /**
  * 安全执行 Git 命令
  */
 function execGit(command, silent = false) {
+  const log = getLog();
   try {
     return execSync(command, {
       encoding: "utf8",
@@ -103,10 +126,12 @@ function validateBranch(branch) {
  * 检查分支是否存在 - 修复版本
  */
 function checkBranchExists(branch, autoFetch = true) {
-  // 🎯 修复：远程分支自动fetch，但要处理网络错误
+  const log = getLog();
+  // 🎯 优化：只 fetch 指定分支而非 --all，避免大仓库卡顿
   if (branch.includes("/") && autoFetch) {
     try {
-      execGit("git fetch --all", true);
+      const branchToFetch = branch.replace(/^origin\//, '');
+      execGit(`git fetch origin ${branchToFetch}`, true);
     } catch (error) {
       // 网络错误时不应该阻止检查本地分支
       log.warning("无法连接远程仓库，将只检查本地分支");
@@ -155,7 +180,7 @@ function getBranchInfo(branch) {
 }
 
 /**
- * 检查工作区状态
+ * 检查工作区状态（返回纯数据，不含 ANSI 转义码）
  */
 function checkWorkingDir() {
   const status = execGit("git status --porcelain", true);
@@ -171,14 +196,11 @@ function checkWorkingDir() {
         const file = line.substring(3);
         let statusText = "";
 
-        if (statusCode.includes("M"))
-          statusText = `${styles.yellow}修改${styles.reset}`;
-        else if (statusCode.includes("A"))
-          statusText = `${styles.green}新增${styles.reset}`;
-        else if (statusCode.includes("D"))
-          statusText = `${styles.red}删除${styles.reset}`;
-        else if (statusCode.includes("??"))
-          statusText = `${styles.gray}未跟踪${styles.reset}`;
+        if (statusCode.includes("M")) statusText = "modified";
+        else if (statusCode.includes("A")) statusText = "added";
+        else if (statusCode.includes("D")) statusText = "deleted";
+        else if (statusCode.includes("??")) statusText = "untracked";
+        else statusText = "unknown";
 
         return { file, status: statusText };
       });
@@ -214,9 +236,6 @@ function analyzeMergeHistory(targetBranch, limit = 10) {
       if (branchMatch) {
         sourceBranch = branchMatch[1] || branchMatch[2];
       }
-      
-      // 尝试从 git show 获取更详细信息
-      const detailInfo = execGit(`git show --format="" --name-only ${hash}`, true);
       
       return {
         hash: hash.substring(0, 7),
@@ -454,9 +473,9 @@ function getBasicStats(target) {
 }
 
 /**
- * 主分析函数
+ * 纯数据分析函数（不输出任何内容，适合程序化调用）
  */
-export async function analyzeBranches(targetBranch, options = {}) {
+export async function analyze(targetBranch, options = {}) {
   // 检查环境
   checkGitRepo();
   validateBranch(targetBranch);
@@ -478,8 +497,8 @@ export async function analyzeBranches(targetBranch, options = {}) {
   const mergeHistory = analyzeMergeHistory(targetBranch);
   const realCodeDiff = calculateRealCodeDiff(targetBranch);
 
-  // 构建结果对象
-  const result = {
+  // 构建结果对象（纯净数据，无 ANSI 转义码）
+  return {
     currentBranch,
     targetBranch,
     relationship,
@@ -490,14 +509,31 @@ export async function analyzeBranches(targetBranch, options = {}) {
     currentInfo,
     targetInfo,
   };
+}
 
-  // JSON 输出
-  if (options.json) {
-    console.log(JSON.stringify(result, null, 2));
-    return result;
-  }
+/**
+ * 将纯状态码映射为带颜色的显示文本
+ */
+function formatFileStatus(status) {
+  const s = getStyles();
+  const map = {
+    modified: `${s.yellow}修改${s.reset}`,
+    added: `${s.green}新增${s.reset}`,
+    deleted: `${s.red}删除${s.reset}`,
+    untracked: `${s.gray}未跟踪${s.reset}`,
+    unknown: `${s.gray}未知${s.reset}`,
+  };
+  return map[status] || status;
+}
 
-  // 🎯 智能美化输出
+/**
+ * 格式化输出分析结果（仅负责展示）
+ */
+export function printReport(result, options = {}) {
+  const log = getLog();
+  const s = getStyles();
+  const { workingDirectory: workingDir, mergeHistory, relationship, basicStats, realCodeDiff } = result;
+
   log.title(`${icons.compare} Git 分支智能对比分析`);
 
   // 工作区状态
@@ -507,7 +543,7 @@ export async function analyzeBranches(targetBranch, options = {}) {
   } else {
     log.warning(` 有 ${workingDir.changedFiles.length} 个文件待处理`);
     workingDir.changedFiles.slice(0, 3).forEach(({ file, status }) => {
-      log.detail(`${status} ${file}`);
+      log.detail(`${formatFileStatus(status)} ${file}`);
     });
     if (workingDir.changedFiles.length > 3) {
       log.detail(`... 还有 ${workingDir.changedFiles.length - 3} 个文件`);
@@ -516,7 +552,7 @@ export async function analyzeBranches(targetBranch, options = {}) {
 
   // 🎯 合并历史分析
   if (mergeHistory.hasAutomatedFlow) {
-    log.subtitle(`${icons.flow} 自动化流程分析`);
+    log.subtitle(`${icons.flow} 自动化流程分析 ${s.dim}(experimental)${s.reset}`);
     log.merged(mergeHistory.flowDescription);
     
     mergeHistory.flowChain.forEach((step, index) => {
@@ -527,16 +563,15 @@ export async function analyzeBranches(targetBranch, options = {}) {
 
   // 分支信息
   log.subtitle(`${icons.branch} 分支信息`);
-  log.detail(`当前分支: ${styles.green}${currentBranch}${styles.reset}`);
-  log.detail(`最新提交: ${currentInfo.lastCommit} (${currentInfo.commitDate})`);
+  log.detail(`当前分支: ${s.green}${result.currentBranch}${s.reset}`);
+  log.detail(`最新提交: ${result.currentInfo.lastCommit} (${result.currentInfo.commitDate})`);
   log.separator();
-  log.detail(`对比分支: ${styles.blue}${targetBranch}${styles.reset}`);
-  log.detail(`最新提交: ${targetInfo.lastCommit} (${targetInfo.commitDate})`);
+  log.detail(`对比分支: ${s.blue}${result.targetBranch}${s.reset}`);
+  log.detail(`最新提交: ${result.targetInfo.lastCommit} (${result.targetInfo.commitDate})`);
 
-  // 🎯 代码状态分析（修复版本 - 更准确的判断）
+  // 🎯 代码状态分析
   log.subtitle(`${icons.chart} 代码状态`);
   
-  // 🎯 修复：添加调试信息（可选）
   if (options.verbose) {
     log.detail(`调试信息: ahead=${basicStats.ahead}, behind=${basicStats.behind}`);
     log.detail(`实际差异: aheadCommits=${realCodeDiff.aheadCommits}, behindCommits=${realCodeDiff.behindCommits}`);
@@ -597,22 +632,22 @@ export async function analyzeBranches(targetBranch, options = {}) {
       }
   }
 
-  // 🎯 详细差异（仅在需要时显示）
+  // 🎯 详细差异
   if (realCodeDiff.realDiff && (relationship.type === "behind" || relationship.type === "diverged" || relationship.type === "ahead")) {
     log.subtitle(`${icons.file} 详细代码差异`);
     if (realCodeDiff.behindCommits > 0) {
-      log.detail(`目标分支的新功能: ${styles.red}${realCodeDiff.behindCommits}${styles.reset} 个提交`);
+      log.detail(`目标分支的新功能: ${s.red}${realCodeDiff.behindCommits}${s.reset} 个提交`);
     }
     if (realCodeDiff.aheadCommits > 0) {
-      log.detail(`当前分支的新功能: ${styles.green}${realCodeDiff.aheadCommits}${styles.reset} 个提交`);
+      log.detail(`当前分支的新功能: ${s.green}${realCodeDiff.aheadCommits}${s.reset} 个提交`);
     }
     if (realCodeDiff.hasFileDiff) {
-      log.detail(`${styles.yellow}有文件变更差异${styles.reset}`);
+      log.detail(`${s.yellow}有文件变更差异${s.reset}`);
     }
     log.detail(`共同基础: ${realCodeDiff.mergeBase}`);
   }
 
-  // 🎯 操作建议（修复版本 - 更智能的建议）
+  // 🎯 操作建议
   log.subtitle(`${icons.target} 智能建议`);
   
   switch (relationship.type) {
@@ -624,14 +659,13 @@ export async function analyzeBranches(targetBranch, options = {}) {
       if (realCodeDiff.realDiff && realCodeDiff.aheadCommits > 0) {
         log.info(" 推送新代码到远程");
         
-        // 🎯 修复：更智能的推送建议
-        if (targetBranch.startsWith('origin/')) {
-          const remoteBranch = targetBranch.replace('origin/', '');
-          log.detail(`git push origin ${currentBranch}:${remoteBranch}`);
+        if (result.targetBranch.startsWith('origin/')) {
+          const remoteBranch = result.targetBranch.replace('origin/', '');
+          log.detail(`git push origin ${result.currentBranch}:${remoteBranch}`);
           log.detail("或者创建合并请求/PR");
         } else {
-          log.detail(`git push origin ${currentBranch}`);
-          if (targetBranch === 'main' || targetBranch === 'master') {
+          log.detail(`git push origin ${result.currentBranch}`);
+          if (result.targetBranch === 'main' || result.targetBranch === 'master') {
             log.detail("建议: 先创建PR而不是直接推送到主分支");
           }
         }
@@ -646,17 +680,16 @@ export async function analyzeBranches(targetBranch, options = {}) {
     case "behind":
       log.warning("需要更新代码");
       
-      // 🎯 修复：更准确的更新建议
-      if (targetBranch.includes('/')) {
-        const parts = targetBranch.split('/');
+      if (result.targetBranch.includes('/')) {
+        const parts = result.targetBranch.split('/');
         if (parts[0] === 'origin') {
           log.detail(`git pull origin ${parts[1]}`);
         } else {
-          log.detail(`git fetch && git merge ${targetBranch}`);
+          log.detail(`git fetch && git merge ${result.targetBranch}`);
         }
       } else {
-        log.detail(`git merge ${targetBranch}`);
-        log.detail(`或使用: git pull origin ${targetBranch}`);
+        log.detail(`git merge ${result.targetBranch}`);
+        log.detail(`或使用: git pull origin ${result.targetBranch}`);
       }
       
       if (realCodeDiff.behindCommits > 3) {
@@ -667,15 +700,14 @@ export async function analyzeBranches(targetBranch, options = {}) {
     case "diverged":
       log.warning("需要合并分支");
       
-      // 🎯 修复：分叉情况的智能建议
       if (realCodeDiff.hasFileDiff && realCodeDiff.fileDiffCount > 5) {
         log.detail("⚠️ 文件冲突风险较高，建议:");
         log.detail("1. 先备份当前工作");
-        log.detail(`2. git merge ${targetBranch} # 合并并解决冲突`);
-        log.detail("3. 或使用: git rebase " + targetBranch + " # 变基方式");
+        log.detail(`2. git merge ${result.targetBranch} # 合并并解决冲突`);
+        log.detail("3. 或使用: git rebase " + result.targetBranch + " # 变基方式");
       } else {
-        log.detail(`git merge ${targetBranch}`);
-        log.detail("或使用 rebase: git rebase " + targetBranch);
+        log.detail(`git merge ${result.targetBranch}`);
+        log.detail("或使用 rebase: git rebase " + result.targetBranch);
       }
       
       if (basicStats.ahead > 10 || basicStats.behind > 10) {
@@ -685,10 +717,33 @@ export async function analyzeBranches(targetBranch, options = {}) {
       
     default:
       log.warning("建议手动检查分支状态");
-      log.detail(`git log --oneline --graph ${targetBranch}..HEAD`);
-      log.detail(`git log --oneline --graph HEAD..${targetBranch}`);
+      log.detail(`git log --oneline --graph ${result.targetBranch}..HEAD`);
+      log.detail(`git log --oneline --graph HEAD..${result.targetBranch}`);
   }
 
   log.end();
+}
+
+/**
+ * 主分析函数（向后兼容：收集数据 + 输出展示）
+ */
+export async function analyzeBranches(targetBranch, options = {}) {
+  if (options.noColor) {
+    setColor(false);
+  }
+
+  const result = await analyze(targetBranch, options);
+
+  // JSON 输出
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  // 非静默模式时输出报告
+  if (!options.silent) {
+    printReport(result, options);
+  }
+
   return result;
 }
